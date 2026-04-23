@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ---------------------------------------------------------------- pytest
+  test:
+    name: Unit tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Create venv + install deps
+        run: |
+          uv venv --python 3.12
+          source .venv/bin/activate
+          uv pip install -e ".[dev]"
+          uv pip install pytest sentence-transformers faiss-cpu pandas pyyaml \
+            presidio-analyzer presidio-anonymizer httpx pydantic python-dotenv
+
+      - name: Install spaCy model (Presidio dependency)
+        run: |
+          source .venv/bin/activate
+          python -m spacy download en_core_web_lg
+
+      - name: Run pytest
+        run: |
+          source .venv/bin/activate
+          python -m pytest tests/ -v --tb=short
+
+  # ---------------------------------------------------------------- FAISS recall sanity
+  retrieval_sanity:
+    name: FAISS recall@3
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v3
+      - run: |
+          uv venv --python 3.12
+          source .venv/bin/activate
+          uv pip install -e ".[dev]"
+          uv pip install sentence-transformers faiss-cpu pandas pydantic python-dotenv
+          python -c "
+          from medibot.data import load_medical_data, disease_to_document
+          from medibot.rag.embeddings import LocalEmbedding
+          from medibot.rag.vector_store import FaissStore
+
+          data = load_medical_data('data/raw')
+          store = FaissStore(LocalEmbedding('BAAI/bge-small-en-v1.5'))
+          store.build([disease_to_document(d, data) for d in data.diseases],
+                      [{'disease': d} for d in data.diseases])
+          K = 3
+          hits = 0
+          for d in data.diseases:
+              syms = list(data.disease_symptoms[d])[:4]
+              q = 'I have ' + ', '.join(s.replace('_', ' ') for s in syms)
+              results = store.search(q, k=K)
+              if any(r.disease == d for r in results):
+                  hits += 1
+          rate = hits / len(data.diseases)
+          print(f'recall@{K} = {hits}/{len(data.diseases)} = {rate:.1%}')
+          assert rate >= 0.95, f'Retrieval regressed below 95%: {rate:.1%}'
+          "
+
+  # ---------------------------------------------------------------- agent evals
+  # Runs only when a secret is configured, so forks / PRs from contributors
+  # who don't have LLM keys still pass CI.
+  agent_evals:
+    name: Agent eval suite (Gemini judge)
+    runs-on: ubuntu-latest
+    needs: test
+    if: ${{ secrets.GOOGLE_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v3
+      - name: Install deps
+        run: |
+          uv venv --python 3.12
+          source .venv/bin/activate
+          uv pip install -e ".[dev]"
+          uv pip install sentence-transformers faiss-cpu pandas pyyaml \
+            presidio-analyzer presidio-anonymizer httpx pydantic python-dotenv \
+            google-genai langfuse
+          python -m spacy download en_core_web_lg
+      - name: Run eval suite (Gemini backend + judge)
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          LLM_PROVIDER: gemini
+        run: |
+          source .venv/bin/activate
+          python scripts/run_evals.py --llm gemini --judge-provider gemini \
+            --output evals/reports/ci.json
+      - name: Upload eval report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: evals/reports/ci.json
