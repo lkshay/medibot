@@ -49,3 +49,7 @@ models/*.gguf
 mlruns/
 wandb/
 .langfuse/
+
+evals/reports/*
+
+docs/*
