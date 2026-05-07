@@ -82,28 +82,6 @@ Roughly ordered by what I'd tackle next.
 
 ---
 
-## What I'd do differently next time
-
-- **Start with traces on day one.** I added Langfuse mid-way and had to backfill instrumentation everywhere. Trace-first development would have caught at least three bugs earlier.
-- **Write the eval set before the agent.** I wrote the orchestrator first and then designed the eval set to fit it — the right order is the reverse.
-- **Pick one provider for the first prototype.** Dual-backend support is great long-term, but it doubled the surface area while I was still learning the basics of tool dispatch.
-- **Treat guardrails as a product feature, not a wrapper.** The output policy (disclaimer / emergency banner) is one of the most user-visible parts of the system; it deserved unit tests from the start, not after I shipped.
-
----
-
-## Status
-
-- 73/73 unit tests passing
-- 13/13 agent eval cases passing (deterministic metrics)
-- FAISS recall@3 = 100% over 41 diseases
-- Langfuse traces flowing end-to-end
-- Gradio UI with trace + guard inspection panels
-- HF Spaces deployment — pending
-- LangGraph variant — pending
-- MCP server — pending
-
----
-
 ## Appendix: stack & quick start
 
 | Layer | Technology |
